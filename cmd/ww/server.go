@@ -142,8 +142,8 @@ func freeslot() (slot string, ok bool) {
 // turnServers return the configured TURN server with HMAC-based ephemeral
 // credentials generated as described in:
 // https://tools.ietf.org/html/draft-uberti-behave-turn-rest-00
-func turnServers() []webrtc.ICEServer {
-	if turnServer == "" {
+func turnServers(useTurn bool) []webrtc.ICEServer {
+	if !useTurn || turnServer == "" {
 		return nil
 	}
 	username := fmt.Sprintf("%d:wormhole", time.Now().Add(slotTimeout).Unix())
@@ -157,7 +157,7 @@ func turnServers() []webrtc.ICEServer {
 }
 
 // relay sets up a rendezvous on a slot and pipes the two websockets together.
-func relay(w http.ResponseWriter, r *http.Request) {
+func relay(w http.ResponseWriter, r *http.Request, useTurn bool) {
 	slotkey := r.URL.Path[1:] // strip leading slash
 	var rconn *websocket.Conn
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -185,7 +185,7 @@ func relay(w http.ResponseWriter, r *http.Request) {
 		Slot       string             `json:"slot",omitempty`
 		ICEServers []webrtc.ICEServer `json:"iceServers",omitempty`
 	}{}
-	initmsg.ICEServers = append(turnServers(), stunServers...)
+	initmsg.ICEServers = append(turnServers(useTurn), stunServers...)
 
 	go func() {
 		if slotkey == "" {
@@ -342,6 +342,7 @@ func server(args ...string) {
 	stunservers := set.String("stun", "stun:relay.webwormhole.io", "list of STUN server addresses to tell clients to use")
 	set.StringVar(&turnServer, "turn", "", "TURN server to use for relaying")
 	set.StringVar(&turnSecret, "turn-secret", "", "secret for HMAC-based authentication in TURN server")
+	turnAccess := set.String("turn-access", "", "access header to be able to use TURN server")
 	set.Parse(args[1:])
 
 	if (*cert == "") != (*key == "") {
@@ -363,7 +364,7 @@ func server(args ...string) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		// Handle WebSocket connections.
 		if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
-			relay(w, r)
+			relay(w, r, r.Header.Get("TurnAccess") == *turnAccess)
 			return
 		}
 
